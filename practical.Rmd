@@ -1,0 +1,97 @@
+Title Practical Machine Learning Course Project
+========================================================
+#Loading and PreProcessing the Data
+Data were obtained under the auspices of a Creative Common License from the GroupWare@LES Human Activity Recognition Lab.  The purpose of the study was to use an on-body sensing apparatus to create a method that would allow the user to receive accurate and appropriate feedback not just on the quantitative aspects of their exerice performance, but also specifically tailored feed back on their qualitative execution.  The experiment included six healthy individuals who were asked to perform one set of 10 repetitions of unilateral dumbbell bicep curls in five conditions: one with the correct techinque and 4 others with various forms of improper techinque.  Data was collected from the onbody sensor in order to attempt to create a predictive algorithm via the aforementioned device containing an accelerometer which would allow the model to correctly interpret when the wearer is using proper vs. improper technique.
+
+First we load the appropriate data packages and create a working directory, then read in the unzipped data obtained from the HAR Lab, in .csv format.
+```{r setoptions,echo=TRUE}
+opts_chunk$set(echo=TRUE,results=show,cache=TRUE)
+```
+```{r}
+temp <- tempfile()
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", temp,method="curl")
+data <- read.csv(temp)
+library(caret)
+```
+We then do a cursory series of data inspection to determine the integrity of the database.
+```{r}
+dim(data)
+str(data)
+
+```
+We find 19622 observations with 160 variables. Column names seem appropriate.  This number of variables is particularly cumbersome, and a more refined database can be created from which to build a predicitive model.  From a cursory glance, it appears that some variables have either a significant number of values that are NA or completely neglected.  Given the array of variables from which to build the model, it will be expediant to eliminate any which do not contact a complete record across all observations.
+
+```{r}
+data[data == ""]<-NA
+data_mod<-data[,which(as.numeric(colSums(is.na(data)))==0)]
+summary(data_mod)
+```
+This brings the database down to 60 variables.  This database will then be divided into a training and validation set (it was not done prior to optimize computing time, though this would have been preferable for validity). Prior to analysis factor variables must be converted to numeric.
+```{r}
+data_mod[,2]<-as.numeric(data_mod[,2])
+data_mod[,5]<-as.numeric(data_mod[,5])
+data_mod[,6]<-as.numeric(data_mod[,6])
+inTrain<-createDataPartition(y=data_mod$classe,p=0.7,list=FALSE)
+training<-data_mod[inTrain,]
+validating<-data_mod[-inTrain,]
+
+To further narrow down variables to use in the predictive model, principal component analysis is applied, with the ultimate predictor value of interest(classe) removed.  
+```{r}
+
+preProc<-preProcess(training[,-60],method="pca")
+```
+
+28 components were used to capture 95% of the variance.  A model is then fit using the method random forest.  The resulting accuracy of the prediction with and without PCA will be compared.
+
+```{r}
+trainPC<-predict(preProc,training[,-60])
+modelFit<-train(training$classe~.,method="rf",data=trainPC,trControl=trainControl(method="cv"))
+modFit$finalModel
+```
+Using random forest with cross validation (chosen for time and working power constraints) after delimiting the variables using PCA, an algorithm results that has an OOB estimate of error rate of 0.89%.  The disadvantage of this approach was a very lengthy runtime.  Testing the algorithm against the validation set drawn from the original training data is completed.
+
+```{r}
+validatePC<-predict(preProc,validating[,-60])
+confusionMatrix(validating$classe,predict(modelFit,validatePC))
+```
+This shows a highly accurate model with an accuracy rate of 0.9918, CI (0.9892,0.994), and a p-value of 2.2e-16.  The confusion matrix shows a few misses in each class (between 3 and 14), but the overall accuracy remains substantial in each. Positive and negative predictive values are between .985 and .998 across the classes, leading to remarkable confidence in the ability of this model to accurately delinate among the classes.
+
+For a more robust cross validation, a second model was created using repeated k-folds.  Instituting 5-fold repeats added nearly 60 mins to the runtime.  The OOB estimate of error rate was 0.97%.  Using the validation dataset, it was found the second model had an accuracy of .9922 (0.9896,0.9943).  All the numbers remain robust.  
+```{r}
+modelFit2<-train(training$classe~.,method="rf",data=trainPC,trControl=trainControl(method="repeatedcv",repeats=5))
+confusionMatrix(validating$classe,predict(modelFit2,validatePC))
+
+```
+Given that no added information was gained from the increased number of repeats, the simpler and more time efficient model will be used for prediction on the test set.
+
+The testing set is loading, and modified as per the training set.
+
+```{r}
+temp2 <- tempfile()
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", temp2,method="curl")
+data2 <- read.csv(temp2)
+data2[data2 == ""]<-NA
+data2_mod<-data2[,which(as.numeric(colSums(is.na(data2)))==0)]
+summary(data2_mod)
+data2_mod[,2]<-as.numeric(data2_mod[,2])
+data2_mod[,5]<-as.numeric(data2_mod[,5])
+data2_mod[,6]<-as.numeric(data2_mod[,6])
+```
+The prediction is then performed.
+```{r}
+testingPC<-predict(preProc,data2_mod[,-60])
+pred_mod1<-predict(modelFit,testingPC)
+pred_mod2<-predict(modelFit2,testingPC)
+```
+
+To create the final output files:
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(pred_mod1)
+```
